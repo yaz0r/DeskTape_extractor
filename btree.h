@@ -100,8 +100,10 @@ struct sNode {
 class bTree {
 public:
 	bool read(FILE* fHandle);
+	void dump(const std::string& outputPath);
 
 	std::vector<sNode> m_nodes;
 
 	std::string getFolderPath(uint32_t CNID);
+	FILE* m_fHandle = nullptr;
 };

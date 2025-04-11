@@ -22,6 +22,11 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
+	std::string outputPath = "";
+	if (argc >= 2) {
+		outputPath = argv[2];
+	}
+
 	uint16_t deskTapeMagic = readU16_BE(fHandle);
 	if (deskTapeMagic != 0x4454) {
 		printf("Not a valid DeskTape");
@@ -127,6 +132,7 @@ int main(int argc, char** argv)
 
 							bTree catalogFile;
 							catalogFile.read(fHandle);
+							catalogFile.dump(outputPath);
 						}
 
 					}

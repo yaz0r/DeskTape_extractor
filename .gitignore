@@ -1,2 +1,5 @@
 ﻿data
 *.user
+.vs
+output
+x64

@@ -221,6 +221,12 @@ bool bTree::read(FILE* fHandle) {
 		readNode(fHandle, m_nodes[i]);
 	}
 
+	m_fHandle = fHandle;
+
+	return true;
+}
+
+void bTree::dump(const std::string& outputPath) {
 	sNode& rootNode = m_nodes[m_nodes[0].m_headerNode.rootNode];
 
 	for (int i = 1; i < m_nodes[0].m_headerNode.totalNodes; i++) {
@@ -234,24 +240,24 @@ bool bTree::read(FILE* fHandle) {
 					uint32_t parentCNID = leafNodeRecord.getParentCNID();
 					std::string name = leafNodeRecord.getName();
 
-					std::string gfolderPath = getFolderPath(parentCNID);
+					std::string gfolderPath = outputPath + getFolderPath(parentCNID);
 
 					if (leafNodeRecord.m_FileRecord.m_dataForkBlockAllocatedSize) {
 						std::filesystem::create_directories(gfolderPath.c_str());
 
 						std::string outputFileName = gfolderPath + "/" + normalizeFilename(name);
 						FILE* fOutput = fopen(outputFileName.c_str(), "wb+");
-						if(fOutput) {
+						if (fOutput) {
 							uint32_t amountLeft = leafNodeRecord.m_FileRecord.m_dataForkBlockSize;
 							for (int i = 0; i < 3; i++) {
 								uint16_t extentStart = leafNodeRecord.m_FileRecord.m_firstDataForkExtents[i] >> 16;
 								uint16_t extentSize = leafNodeRecord.m_FileRecord.m_firstDataForkExtents[i] & 0xFFFF;
 
-								fseek(fHandle, (extentStart - 0x26) * 0x9800 + 0x1000, SEEK_SET);
+								fseek(m_fHandle, (extentStart - 0x26) * 0x9800 + 0x1000, SEEK_SET);
 								for (int j = 0; j < extentSize; j++) {
 									std::array<uint8_t, 0x9800> buffer;
 									uint32_t sizeToWrite = std::min<uint32_t>(amountLeft, 0x9800);
-									fread(buffer.data(), 1, sizeToWrite, fHandle);
+									fread(buffer.data(), 1, sizeToWrite, m_fHandle);
 									fwrite(buffer.data(), 1, sizeToWrite, fOutput);
 
 									amountLeft -= sizeToWrite;
@@ -270,6 +276,4 @@ bool bTree::read(FILE* fHandle) {
 			}
 		}
 	}
-
-	return true;
 }
