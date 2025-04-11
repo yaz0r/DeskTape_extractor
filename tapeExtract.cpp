@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
+#include <array>
 
 #include "btree.h"
 #include "fileAccess.h"
@@ -34,19 +35,135 @@ int main(int argc, char** argv)
 	}
 	uint32_t versionMagic = readU32_BE(fHandle);
 
-	// Look for first session
+	/*
+	* Actually not useful, can compute that from the session header
+	// Figure out where the data starts
+	int32_t sectorOffset = 0;
+	for (int i = 0; i < 0x20; i++) {
+		fseek(fHandle, 0x200 * i, SEEK_SET);
+		uint16_t magic = readU16_BE(fHandle);
+		if (magic != deskTapeMagic) {
+			sectorOffset = i - 0xA; // data should always start at 0x1400?
+			break;
+		}
+	}
+	*/
+
+	// Look for last session
 	fseek(fHandle, 0, SEEK_END);
-	uint32_t tapeSize = ftell(fHandle);
-	fseek(fHandle, 0, SEEK_SET);
-	while (ftell(fHandle) != tapeSize - 0x200) {
+	uint32_t archiveSize = ftell(fHandle);
+	int32_t numSectors = archiveSize / 0x200;
+	int32_t lastSessionSector = -1;
+	for (uint32_t sector = numSectors - 1; sector >= 0; sector--) {
+		fseek(fHandle, sector * 0x200, SEEK_SET);
+		if (readU16_BE(fHandle) == 0x524D) {
+			lastSessionSector = sector;
+			break;
+		}
+	}
+	if (lastSessionSector == -1) {
+		printf("Failed to find last session");
+		return -1;
+	}
+
+	struct sSession {
+		uint32_t m_sessionStartSector;
+
+		uint16_t m_magic; // always 0x524D 'RM'
+		uint16_t m_sessionID;
+		uint16_t m_sessionID2;
+		uint16_t m_unk6;
+		uint32_t m_numSpans;
+		uint32_t m_unkC;
+		uint32_t m_unk10;
+		uint32_t m_unk14;
+		uint16_t m_unk18; // \ Those are related to the 4 bytes at start of archive offset 4
+		uint16_t m_unk1A; // /
+		uint32_t m_unk1C; // always 0x20000
+		std::array<uint8_t, 8> m_TDVersionName;
+		uint32_t m_previousSession;
+		uint32_t m_currentSession;
+		uint32_t m_unk30;
+		uint32_t m_unk34;
+
+		struct sPan {
+			uint32_t m0;
+			uint32_t m4;
+		};
+		std::vector<sPan> m_spans;
+
+	};
+	std::vector<sSession> sessions;
+
+	// Find all sessions
+	uint32_t currentSessionSector = lastSessionSector;
+	while (true) {
+		fseek(fHandle, currentSessionSector * 0x200, SEEK_SET);
+		sSession newSession;
+		newSession.m_sessionStartSector = currentSessionSector;
+
+		newSession.m_magic = readU16_BE(fHandle);
+		newSession.m_sessionID = readU16_BE(fHandle);
+		newSession.m_sessionID2 = readU16_BE(fHandle);
+		newSession.m_unk6 = readU16_BE(fHandle);
+		newSession.m_numSpans = readU32_BE(fHandle);
+		newSession.m_unkC = readU32_BE(fHandle); // some sector number to something
+		newSession.m_unk10 = readU32_BE(fHandle); // the offset to remap file system sectors
+		newSession.m_unk14 = readU32_BE(fHandle);
+		newSession.m_unk18 = readU16_BE(fHandle);
+		newSession.m_unk1A = readU16_BE(fHandle);
+		newSession.m_unk1C = readU32_BE(fHandle);
+		for (int i = 0; i < 8; i++) {
+			newSession.m_TDVersionName[i] = readU8(fHandle);
+		}
+		newSession.m_previousSession = readU32_BE(fHandle);
+		newSession.m_currentSession = readU32_BE(fHandle);
+		newSession.m_unk30 = readU32_BE(fHandle);
+		newSession.m_unk34 = readU32_BE(fHandle);
+		for (int i = 0; i < newSession.m_numSpans; i++) {
+			auto& newSpan = newSession.m_spans.emplace_back();
+			newSpan.m0 = readU32_BE(fHandle); // in-disk offset (-0x60)
+			newSpan.m4 = readU32_BE(fHandle); // size in sectors
+		}
+		sessions.insert(sessions.begin(), newSession);
+
+		if (newSession.m_previousSession == 0) {
+			break;
+		}
+		currentSessionSector = newSession.m_previousSession - (newSession.m_currentSession - newSession.m_sessionStartSector);
+	}
+
+	// Rewrite session
+	for (int i = 0; i < sessions.size(); i++)
+	{
+		auto& session = sessions[i];
+		fseek(fHandle, session.m_sessionStartSector * 0x200 + 0x400, SEEK_SET);
+		std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".bin";
+		if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+
+			for (int j = 0; j < session.m_spans.size(); j++) {
+				fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
+				for (int k = 0; k < session.m_spans[j].m4; k++) {
+					std::array<uint8_t, 0x200> buffer;
+					fread(buffer.data(), 1, 0x200, fHandle);
+					fwrite(buffer.data(), 1, 0x200, fOutputSession);
+				}
+			}
+
+			fclose(fOutputSession);
+		}
+	}
+
+	for (int i = 0; i < sessions.size(); i++)
+	{
+		fseek(fHandle, sessions[i].m_sessionStartSector * 0x200, SEEK_SET);
 		uint32_t sessionStart = ftell(fHandle);
 		if ((readU16_BE(fHandle) == 0x524D) && (readU16_BE(fHandle) == 1) && (readU16_BE(fHandle) == 1)) {
-			fseek(fHandle, sessionStart + 0x2C, SEEK_SET);
-			uint32_t partitionTableStart = readU32_BE(fHandle); // Doesn't seem to always work, to investigate
-			partitionTableStart = sessionStart / 0x200 + 0x2;
-			
+			fseek(fHandle, sessionStart + 0x400, SEEK_SET);
+			uint32_t partitionTableStart = ftell(fHandle) / 0x200;
+
 			int partitionMapIndex = 0;
-			while(true)
+			while (true)
 			{
 				fseek(fHandle, (partitionTableStart + partitionMapIndex) * 0x200, SEEK_SET);
 				uint16_t pmSig = readU16_BE(fHandle); assert(pmSig == 0x504D); // signature 
@@ -148,6 +265,8 @@ int main(int argc, char** argv)
 		}
 		fseek(fHandle, sessionStart + 0x200, SEEK_SET);
 	}
+
+
 
 	fclose(fHandle);
 
