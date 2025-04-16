@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string>
 #include <array>
+#include <filesystem>
 
 #include "btree.h"
 #include "fileAccess.h"
@@ -73,7 +74,8 @@ int main(int argc, char** argv)
 		uint16_t m_sessionID;
 		uint16_t m_sessionID2;
 		uint16_t m_unk6;
-		uint32_t m_numSpans;
+		uint16_t m_unk8;
+		uint16_t m_numSpans;
 		uint32_t m_unkC;
 		uint32_t m_unk10;
 		uint32_t m_unk14;
@@ -106,8 +108,9 @@ int main(int argc, char** argv)
 		newSession.m_sessionID = readU16_BE(fHandle);
 		newSession.m_sessionID2 = readU16_BE(fHandle);
 		newSession.m_unk6 = readU16_BE(fHandle);
-		newSession.m_numSpans = readU32_BE(fHandle);
-		newSession.m_unkC = readU32_BE(fHandle); // some sector number to something
+		newSession.m_unk8 = readU16_BE(fHandle); // 1 in last session?
+		newSession.m_numSpans = readU16_BE(fHandle);
+		newSession.m_unkC = readU32_BE(fHandle); // some sector number to something, looks more or less like the end of current session
 		newSession.m_unk10 = readU32_BE(fHandle); // the offset to remap file system sectors
 		newSession.m_unk14 = readU32_BE(fHandle);
 		newSession.m_unk18 = readU16_BE(fHandle);
@@ -138,8 +141,18 @@ int main(int argc, char** argv)
 	{
 		auto& session = sessions[i];
 		fseek(fHandle, session.m_sessionStartSector * 0x200 + 0x400, SEEK_SET);
+		std::filesystem::create_directories(outputPath);
 		std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".bin";
 		if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+
+			// Go to beginning of data
+			fseek(fHandle, (0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200, SEEK_SET);
+			fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+			for (int k = 0; k < session.m_currentSession; k++) {
+				std::array<uint8_t, 0x200> buffer;
+				fread(buffer.data(), 1, 0x200, fHandle);
+				fwrite(buffer.data(), 1, 0x200, fOutputSession);
+			}
 
 			for (int j = 0; j < session.m_spans.size(); j++) {
 				fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
@@ -247,9 +260,9 @@ int main(int argc, char** argv)
 							// Seek to catalog
 							fseek(fHandle, 0xB800, SEEK_CUR); // 0xA200
 
-							bTree catalogFile;
-							catalogFile.read(fHandle);
-							catalogFile.dump(outputPath);
+							//bTree catalogFile;
+							//catalogFile.read(fHandle);
+							//catalogFile.dump(outputPath);
 						}
 
 					}
