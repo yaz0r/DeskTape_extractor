@@ -101,6 +101,7 @@ class bTree {
 public:
 	bool read(FILE* fHandle);
 	void dump(const std::string& outputPath);
+	void dumpLeafNodes(const std::string& outputFileName);
 
 	std::vector<sNode> m_nodes;
 

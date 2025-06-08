@@ -277,3 +277,27 @@ void bTree::dump(const std::string& outputPath) {
 		}
 	}
 }
+
+void bTree::dumpLeafNodes(const std::string& outputFileName) {
+
+	if (FILE* fHandle = fopen(outputFileName.c_str(), "w+")) {
+		sNode& rootNode = m_nodes[m_nodes[0].m_headerNode.rootNode];
+
+		for (int i = 1; i < m_nodes[0].m_headerNode.totalNodes; i++) {
+			sNode& currentNode = m_nodes[i];
+			if (currentNode.m_type == 0xFF) {
+				// leaf node
+				for (int j = 0; j < currentNode.m_leafNode.size(); j++) {
+					auto& leafNodeRecord = currentNode.m_leafNode[j];
+					if (leafNodeRecord.m_type == 2) {
+						// File
+						uint32_t parentCNID = leafNodeRecord.getParentCNID();
+						std::string name = leafNodeRecord.getName();
+
+						fprintf(fHandle, "%s 0x%08X/0x%08X\n", name.c_str(), leafNodeRecord.m_FileRecord.m_firstDataForkExtents[0], leafNodeRecord.m_FileRecord.m_firstResourceForkExtents[0]);
+					}
+				}
+			}
+		}
+	}
+}

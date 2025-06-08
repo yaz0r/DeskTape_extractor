@@ -11,6 +11,148 @@
 #include "btree.h"
 #include "fileAccess.h"
 
+struct sSession {
+	uint32_t m_sessionStartSector;
+
+	uint16_t m_magic; // always 0x524D 'RM'
+	uint16_t m_sessionID;
+	uint16_t m_sessionID2;
+	uint16_t m_unk6;
+	uint16_t m_unk8;
+	uint16_t m_numSpans;
+	uint32_t m_unkC;
+	uint32_t m_unk10;
+	uint32_t m_unk14;
+	uint16_t m_unk18; // \ Those are related to the 4 bytes at start of archive offset 4
+	uint16_t m_unk1A; // /
+	uint32_t m_unk1C; // always 0x20000
+	std::array<uint8_t, 8> m_TDVersionName;
+	uint32_t m_previousSession;
+	uint32_t m_currentSession;
+	uint32_t m_numSystemSectors;
+	uint32_t m_unk34;
+
+	struct sPan {
+		uint32_t m0;
+		uint32_t m4;
+	};
+	std::vector<sPan> m_spans;
+
+};
+
+std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& sessions, FILE* fHandle) {
+	fseek(fHandle, sessions[sessionIndex].m_sessionStartSector * 0x200, SEEK_SET);
+	uint32_t sessionStart = ftell(fHandle);
+	if (readU16_BE(fHandle) == 0x524D) {
+		fseek(fHandle, sessionStart + 0x400, SEEK_SET);
+		uint32_t partitionTableStart = ftell(fHandle) / 0x200;
+
+		int partitionMapIndex = 0;
+		while (true)
+		{
+			fseek(fHandle, (partitionTableStart + partitionMapIndex) * 0x200, SEEK_SET);
+			uint16_t pmSig = readU16_BE(fHandle); assert(pmSig == 0x504D); // signature 
+			readU16_BE(fHandle); // padding
+			uint32_t pmMapBlkCnt = readU32_BE(fHandle); /* partition blocks count */
+			uint32_t pmPyPartStart = readU32_BE(fHandle); /* physical block start of partition */
+			uint32_t pmPartBlkCnt = readU32_BE(fHandle); /* physical block count of partition */
+			std::string pmPartName = readString(fHandle, 32); // partition name
+			std::string pmPartType = readString(fHandle, 32); // partition type
+
+			if (pmPartType == "Apple_HFS") {
+				uint32_t HFS_Start = (partitionTableStart - 1 + pmPyPartStart) * 0x200;
+				fseek(fHandle, HFS_Start, SEEK_SET);
+				// read HFS boot block
+				uint32_t bootBlockPosition = ftell(fHandle);
+				{
+					uint16_t bootBlockSignature = readU16_BE(fHandle); assert(bootBlockSignature == 0x4C4B);
+					uint32_t bootCodeEntryPoint = readU32_BE(fHandle); assert(bootCodeEntryPoint == 0x60000086);
+					uint16_t bootBlocksVersionNumber = readU16_BE(fHandle); assert(bootBlocksVersionNumber == 0x4418);
+					uint16_t pageFlags = readU16_BE(fHandle);
+					std::string systemFilename = readPascalFixedString(fHandle, 15);
+					std::string finderFilename = readPascalFixedString(fHandle, 15);
+					std::string debugger1Filename = readPascalFixedString(fHandle, 15);
+					std::string debugger2Filename = readPascalFixedString(fHandle, 15);
+					std::string startupScreenFilename = readPascalFixedString(fHandle, 15);
+					std::string startupProgramFilename = readPascalFixedString(fHandle, 15);
+					std::string scrapFilename = readPascalFixedString(fHandle, 15);
+
+					uint16_t numAllocatedFileControlBlocks = readU16_BE(fHandle);
+					uint16_t numMaxEventQueueElements = readU16_BE(fHandle);
+					uint32_t systemHeap128K = readU32_BE(fHandle);
+					uint32_t systemHeap256K = readU32_BE(fHandle);
+					uint32_t systemHeapOther = readU32_BE(fHandle);
+					readU16_BE(fHandle);
+					uint32_t systemHeapSpace = readU32_BE(fHandle);
+					uint32_t fractionHeapFree = readU32_BE(fHandle);
+				}
+				// read the MDB (Master Directory Block)
+				fseek(fHandle, bootBlockPosition + 0x400, SEEK_SET);
+				{
+					uint16_t signature = readU16_BE(fHandle);
+					assert(signature == 0x4244);
+					{
+						uint32_t volumeCreationTime = readU32_BE(fHandle);
+						uint32_t volumeModificationTime = readU32_BE(fHandle);
+						uint16_t volumeAttributeFlags = readU16_BE(fHandle);
+						uint16_t numFilesInRoot = readU16_BE(fHandle);
+						uint16_t volumeBitmapBlockNumber = readU16_BE(fHandle);
+						uint16_t startOfNextAllocationSearch = readU16_BE(fHandle);
+						uint16_t numAllocationBlocks = readU16_BE(fHandle);
+						uint32_t allocationBlockSize = readU32_BE(fHandle);
+						uint32_t defaultClump = readU32_BE(fHandle);
+						uint16_t extentsStartBlockNumber = readU16_BE(fHandle);
+						uint32_t nextAvailableCatalogNodeIdentifier = readU32_BE(fHandle);
+						uint16_t numUnusedAllocationBlocks = readU16_BE(fHandle);
+						std::string volumeName = readPascalFixedString(fHandle, 27);
+						uint32_t lastBackupTime = readU32_BE(fHandle);
+						uint16_t backupSequenceNumber = readU16_BE(fHandle);
+						uint32_t volumeWriteCount = readU32_BE(fHandle);
+						uint32_t clumpSizeForExtentsFile = readU32_BE(fHandle);
+						uint32_t clumpSizeForCatalogFile = readU32_BE(fHandle);
+						uint16_t numSubDirInRoot = readU16_BE(fHandle);
+						uint32_t totalNumberOfFiles = readU32_BE(fHandle);
+						uint32_t totalNumberOfFolders = readU32_BE(fHandle);
+						fseek(fHandle, 32, SEEK_CUR); // skip the finder information
+						uint16_t embeddedVolumeSignature = readU16_BE(fHandle);
+						uint32_t embeddedVolumeDescriptor = readU32_BE(fHandle);
+						uint32_t extentsFileSize = readU32_BE(fHandle);
+						uint32_t extentsFileRecord0 = readU32_BE(fHandle);
+						uint32_t extentsFileRecord1 = readU32_BE(fHandle);
+						uint32_t extentsFileRecord2 = readU32_BE(fHandle);
+						uint32_t catalogFileSize = readU32_BE(fHandle);
+						uint32_t catalogFileRecord0 = readU32_BE(fHandle);
+						uint32_t catalogFileRecord1 = readU32_BE(fHandle);
+						uint32_t catalogFileRecord2 = readU32_BE(fHandle);
+
+						// read the volume bitmap block
+						assert(volumeBitmapBlockNumber == 3);
+						fseek(fHandle, bootBlockPosition + 0x200 * volumeBitmapBlockNumber, SEEK_SET);
+
+						// Seek to catalog
+						fseek(fHandle, 0xB800, SEEK_CUR); // 0xA200
+
+						bTree catalogFile;
+						catalogFile.read(fHandle);
+						return catalogFile;
+						//catalogFile.dump(outputPath);
+					}
+
+				}
+			}
+
+			partitionMapIndex++;
+			if (partitionMapIndex >= pmMapBlkCnt) {
+				return std::optional<bTree>();
+			}
+		}
+
+		return std::optional<bTree>();
+	}
+	fseek(fHandle, sessionStart + 0x200, SEEK_SET);
+	return std::optional<bTree>();
+}
+
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
@@ -67,34 +209,6 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-	struct sSession {
-		uint32_t m_sessionStartSector;
-
-		uint16_t m_magic; // always 0x524D 'RM'
-		uint16_t m_sessionID;
-		uint16_t m_sessionID2;
-		uint16_t m_unk6;
-		uint16_t m_unk8;
-		uint16_t m_numSpans;
-		uint32_t m_unkC;
-		uint32_t m_unk10;
-		uint32_t m_unk14;
-		uint16_t m_unk18; // \ Those are related to the 4 bytes at start of archive offset 4
-		uint16_t m_unk1A; // /
-		uint32_t m_unk1C; // always 0x20000
-		std::array<uint8_t, 8> m_TDVersionName;
-		uint32_t m_previousSession;
-		uint32_t m_currentSession;
-		uint32_t m_unk30;
-		uint32_t m_unk34;
-
-		struct sPan {
-			uint32_t m0;
-			uint32_t m4;
-		};
-		std::vector<sPan> m_spans;
-
-	};
 	std::vector<sSession> sessions;
 
 	// Find all sessions
@@ -121,7 +235,7 @@ int main(int argc, char** argv)
 		}
 		newSession.m_previousSession = readU32_BE(fHandle);
 		newSession.m_currentSession = readU32_BE(fHandle);
-		newSession.m_unk30 = readU32_BE(fHandle);
+		newSession.m_numSystemSectors = readU32_BE(fHandle); // directory size required for mounting
 		newSession.m_unk34 = readU32_BE(fHandle);
 		for (int i = 0; i < newSession.m_numSpans; i++) {
 			auto& newSpan = newSession.m_spans.emplace_back();
@@ -136,149 +250,78 @@ int main(int argc, char** argv)
 		currentSessionSector = newSession.m_previousSession - (newSession.m_currentSession - newSession.m_sessionStartSector);
 	}
 
-	// Rewrite session
-	for (int i = 0; i < sessions.size(); i++)
-	{
-		auto& session = sessions[i];
-		fseek(fHandle, session.m_sessionStartSector * 0x200 + 0x400, SEEK_SET);
-		std::filesystem::create_directories(outputPath);
-		std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".bin";
-		if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+	// Dump session data
+	if (FILE* fOutput = fopen(std::format("{}/sessions.txt", outputPath.c_str()).c_str(), "w+")) {
+		for (int i = 0; i < sessions.size(); i++) {
+			auto& session = sessions[i];
 
-			// Go to beginning of data
-			fseek(fHandle, (0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200, SEEK_SET);
-			fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
-			for (int k = 0; k < session.m_currentSession; k++) {
-				std::array<uint8_t, 0x200> buffer;
-				fread(buffer.data(), 1, 0x200, fHandle);
-				fwrite(buffer.data(), 1, 0x200, fOutputSession);
+			fprintf(fOutput, "=============================================\n");
+			fprintf(fOutput, "Session %d\n", i);
+			fprintf(fOutput, "m_sessionID 0x%04X\n", session.m_sessionID);
+			fprintf(fOutput, "m_sessionID2 0x%04X\n", session.m_sessionID2);
+			fprintf(fOutput, "m_unk6 0x%04X\n", session.m_unk6);
+			fprintf(fOutput, "m_unk8 0x%04X\n", session.m_unk8);
+			fprintf(fOutput, "m_numSpans 0x%04X\n", session.m_numSpans);
+			fprintf(fOutput, "m_unkC 0x%08X\n", session.m_unkC);
+			fprintf(fOutput, "m_unk10 0x%08X\n", session.m_unk10);
+			fprintf(fOutput, "m_unk14 0x%08X\n", session.m_unk14);
+			fprintf(fOutput, "m_unk18 0x%04X\n", session.m_unk18);
+			fprintf(fOutput, "m_unk1A 0x%04X\n", session.m_unk1A);
+			fprintf(fOutput, "m_unk1C 0x%08X\n", session.m_unk1C);
+			fprintf(fOutput, "m_TDVersionName "); for (int i = 0; i < 8; i++) { fprintf(fOutput, "%c", session.m_TDVersionName[i]); } fprintf(fOutput, "\n");
+			fprintf(fOutput, "m_previousSession 0x%08X\n", session.m_previousSession);
+			fprintf(fOutput, "m_currentSession 0x%08X\n", session.m_currentSession);
+			fprintf(fOutput, "m_numSystemSectors 0x%08X\n", session.m_numSystemSectors);
+			fprintf(fOutput, "m_unk34 0x%08X\n", session.m_unk34);
+			assert(session.m_numSpans == session.m_spans.size());
+			for (int j = 0; j < session.m_numSpans; j++) {
+				fprintf(fOutput, "Span %d 0x%08X 0x%08X\n", j, session.m_spans[j].m0, session.m_spans[j].m4);
 			}
+		}
+		fclose(fOutput);
+	}
 
-			for (int j = 0; j < session.m_spans.size(); j++) {
-				fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
-				for (int k = 0; k < session.m_spans[j].m4; k++) {
+	// Rewrite session
+	if (false) {
+		for (int i = 0; i < sessions.size(); i++)
+		{
+			auto& session = sessions[i];
+			fseek(fHandle, session.m_sessionStartSector * 0x200 + 0x400, SEEK_SET);
+			std::filesystem::create_directories(outputPath);
+			std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".bin";
+			if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+
+				// Go to beginning of data
+				fseek(fHandle, (0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200, SEEK_SET);
+				fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+				for (int k = 0; k < session.m_currentSession; k++) {
 					std::array<uint8_t, 0x200> buffer;
 					fread(buffer.data(), 1, 0x200, fHandle);
 					fwrite(buffer.data(), 1, 0x200, fOutputSession);
 				}
-			}
 
-			fclose(fOutputSession);
-		}
-	}
-
-	for (int i = 0; i < sessions.size(); i++)
-	{
-		fseek(fHandle, sessions[i].m_sessionStartSector * 0x200, SEEK_SET);
-		uint32_t sessionStart = ftell(fHandle);
-		if ((readU16_BE(fHandle) == 0x524D) && (readU16_BE(fHandle) == 1) && (readU16_BE(fHandle) == 1)) {
-			fseek(fHandle, sessionStart + 0x400, SEEK_SET);
-			uint32_t partitionTableStart = ftell(fHandle) / 0x200;
-
-			int partitionMapIndex = 0;
-			while (true)
-			{
-				fseek(fHandle, (partitionTableStart + partitionMapIndex) * 0x200, SEEK_SET);
-				uint16_t pmSig = readU16_BE(fHandle); assert(pmSig == 0x504D); // signature 
-				readU16_BE(fHandle); // padding
-				uint32_t pmMapBlkCnt = readU32_BE(fHandle); /* partition blocks count */
-				uint32_t pmPyPartStart = readU32_BE(fHandle); /* physical block start of partition */
-				uint32_t pmPartBlkCnt = readU32_BE(fHandle); /* physical block count of partition */
-				std::string pmPartName = readString(fHandle, 32); // partition name
-				std::string pmPartType = readString(fHandle, 32); // partition type
-
-				if (pmPartType == "Apple_HFS") {
-					uint32_t HFS_Start = (partitionTableStart - 1 + pmPyPartStart) * 0x200;
-					fseek(fHandle, HFS_Start, SEEK_SET);
-					// read HFS boot block
-					uint32_t bootBlockPosition = ftell(fHandle);
-					{
-						uint16_t bootBlockSignature = readU16_BE(fHandle); assert(bootBlockSignature == 0x4C4B);
-						uint32_t bootCodeEntryPoint = readU32_BE(fHandle); assert(0x86000060);
-						uint16_t bootBlocksVersionNumber = readU16_BE(fHandle); assert(0x4418);
-						uint16_t pageFlags = readU16_BE(fHandle);
-						std::string systemFilename = readPascalFixedString(fHandle, 15);
-						std::string finderFilename = readPascalFixedString(fHandle, 15);
-						std::string debugger1Filename = readPascalFixedString(fHandle, 15);
-						std::string debugger2Filename = readPascalFixedString(fHandle, 15);
-						std::string startupScreenFilename = readPascalFixedString(fHandle, 15);
-						std::string startupProgramFilename = readPascalFixedString(fHandle, 15);
-						std::string scrapFilename = readPascalFixedString(fHandle, 15);
-
-						uint16_t numAllocatedFileControlBlocks = readU16_BE(fHandle);
-						uint16_t numMaxEventQueueElements = readU16_BE(fHandle);
-						uint32_t systemHeap128K = readU32_BE(fHandle);
-						uint32_t systemHeap256K = readU32_BE(fHandle);
-						uint32_t systemHeapOther = readU32_BE(fHandle);
-						readU16_BE(fHandle);
-						uint32_t systemHeapSpace = readU32_BE(fHandle);
-						uint32_t fractionHeapFree = readU32_BE(fHandle);
-					}
-					// read the MDB (Master Directory Block)
-					fseek(fHandle, bootBlockPosition + 0x400, SEEK_SET);
-					{
-						uint16_t signature = readU16_BE(fHandle);
-						assert(signature == 0x4244);
-						{
-							uint32_t volumeCreationTime = readU32_BE(fHandle);
-							uint32_t volumeModificationTime = readU32_BE(fHandle);
-							uint16_t volumeAttributeFlags = readU16_BE(fHandle);
-							uint16_t numFilesInRoot = readU16_BE(fHandle);
-							uint16_t volumeBitmapBlockNumber = readU16_BE(fHandle);
-							uint16_t startOfNextAllocationSearch = readU16_BE(fHandle);
-							uint16_t numAllocationBlocks = readU16_BE(fHandle);
-							uint32_t allocationBlockSize = readU32_BE(fHandle);
-							uint32_t defaultClump = readU32_BE(fHandle);
-							uint16_t extentsStartBlockNumber = readU16_BE(fHandle);
-							uint32_t nextAvailableCatalogNodeIdentifier = readU32_BE(fHandle);
-							uint16_t numUnusedAllocationBlocks = readU16_BE(fHandle);
-							std::string volumeName = readPascalFixedString(fHandle, 27);
-							uint32_t lastBackupTime = readU32_BE(fHandle);
-							uint16_t backupSequenceNumber = readU16_BE(fHandle);
-							uint32_t volumeWriteCount = readU32_BE(fHandle);
-							uint32_t clumpSizeForExtentsFile = readU32_BE(fHandle);
-							uint32_t clumpSizeForCatalogFile = readU32_BE(fHandle);
-							uint16_t numSubDirInRoot = readU16_BE(fHandle);
-							uint32_t totalNumberOfFiles = readU32_BE(fHandle);
-							uint32_t totalNumberOfFolders = readU32_BE(fHandle);
-							fseek(fHandle, 32, SEEK_CUR); // skip the finder information
-							uint16_t embeddedVolumeSignature = readU16_BE(fHandle);
-							uint32_t embeddedVolumeDescriptor = readU32_BE(fHandle);
-							uint32_t extentsFileSize = readU32_BE(fHandle);
-							uint32_t extentsFileRecord0 = readU32_BE(fHandle);
-							uint32_t extentsFileRecord1 = readU32_BE(fHandle);
-							uint32_t extentsFileRecord2 = readU32_BE(fHandle);
-							uint32_t catalogFileSize = readU32_BE(fHandle);
-							uint32_t catalogFileRecord0 = readU32_BE(fHandle);
-							uint32_t catalogFileRecord1 = readU32_BE(fHandle);
-							uint32_t catalogFileRecord2 = readU32_BE(fHandle);
-
-							// read the volume bitmap block
-							assert(volumeBitmapBlockNumber == 3);
-							fseek(fHandle, bootBlockPosition + 0x200 * volumeBitmapBlockNumber, SEEK_SET);
-
-							// Seek to catalog
-							fseek(fHandle, 0xB800, SEEK_CUR); // 0xA200
-
-							//bTree catalogFile;
-							//catalogFile.read(fHandle);
-							//catalogFile.dump(outputPath);
-						}
-
+				for (int j = 0; j < session.m_spans.size(); j++) {
+					fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
+					for (int k = 0; k < session.m_spans[j].m4; k++) {
+						std::array<uint8_t, 0x200> buffer;
+						fread(buffer.data(), 1, 0x200, fHandle);
+						fwrite(buffer.data(), 1, 0x200, fOutputSession);
 					}
 				}
 
-				partitionMapIndex++;
-				if (partitionMapIndex >= pmMapBlkCnt) {
-					return 0;
-				}
+				fclose(fOutputSession);
 			}
-
-			return 0;
 		}
-		fseek(fHandle, sessionStart + 0x200, SEEK_SET);
 	}
 
+	for (int i = 0; i < sessions.size(); i++) {
+		std::optional<bTree> catalogFileSession = getCatalogSession(i, sessions, fHandle);
+		if (catalogFileSession.has_value()) {
+			catalogFileSession->dumpLeafNodes(std::format("{}/nodes_{}.txt", outputPath.c_str(), i));
+		}
+
+		//std::optional<bTree> catalogFileSessionNext = getCatalogSession(i+1, sessions, fHandle);
+	}
 
 
 	fclose(fHandle);

@@ -40,7 +40,7 @@ std::string readPascalFixedString(FILE* fHandle, int size) {
 			string += character;
 		}
 		else {
-			assert(character == 0);
+			//assert(character == 0);
 		}
 	}
 
