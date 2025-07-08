@@ -12,8 +12,8 @@ public:
 		return m_numSectors;
 	}
 	virtual void seekToSector(int) = 0;
-	virtual int tellPosition() = 0;
-	virtual void seekToPosition(int) = 0;
+	virtual uint64_t tellPosition() = 0;
+	virtual void seekToPosition(uint64_t) = 0;
 	virtual void skip(int amountToSkip) {
 		seekToPosition(tellPosition() + amountToSkip);
 	}
@@ -31,7 +31,7 @@ public:
 	virtual std::string readString(int size);
 
 protected:
-	int m_numSectors = 0;
+	uint32_t m_numSectors = 0;
 };
 
 class tapeFile_raw : public tapeFile {
@@ -51,11 +51,11 @@ public:
 		assert(m_numSectors * 0x200 == size);
 		return true;
 	}
-	virtual int tellPosition() override {
-		return ftell(m_file);
+	virtual uint64_t tellPosition() override {
+		return _ftelli64(m_file);
 	}
-	virtual void seekToPosition(int position) override {
-		fseek(m_file, position, SEEK_SET);
+	virtual void seekToPosition(uint64_t position) override {
+		_fseeki64(m_file, position, SEEK_SET);
 	}
 	virtual void seekToSector(int sector) override {
 		fseek(m_file, sector * 0x200, SEEK_SET);
@@ -81,23 +81,24 @@ public:
 			return false;
 		}
 		fseek(m_file, 0, SEEK_END);
-		int size = ftell(m_file);
+		int64_t size = _ftelli64(m_file);
 		fseek(m_file, 0, SEEK_SET);
 		m_numSectors = size / 0x211;
-		assert(m_numSectors * 0x211 == size);
+		assert(m_numSectors * 0x211 + 0x12 == size);
+		seekToSector(0);
 		return true;
 	}
-	virtual int tellPosition() override {
-		int absolutePosition = ftell(m_file);
-		int numSectors = absolutePosition / 0x211;
+	virtual uint64_t tellPosition() override {
+		int64_t absolutePosition = _ftelli64(m_file);
+		int64_t numSectors = absolutePosition / 0x211;
 		return absolutePosition - numSectors * 0x11;
 	}
-	virtual void seekToPosition(int position) override {
-		int numSectors = position / 0x200;
-		fseek(m_file, position + numSectors * 0x11, SEEK_SET);
+	virtual void seekToPosition(uint64_t position) override {
+		int64_t sector = position / 0x200;
+		_fseeki64(m_file, (uint64_t)sector * 0x211 + 0x10 + position % 0x200, SEEK_SET);
 	}
 	virtual void seekToSector(int sector) {
-		fseek(m_file, sector * 0x211, SEEK_SET);
+		_fseeki64(m_file, (uint64_t)sector * 0x211 + 0x10, SEEK_SET);
 	}
 	virtual uint8_t readU8() {
 		if (distanceToEndOfSector() == 0) {
