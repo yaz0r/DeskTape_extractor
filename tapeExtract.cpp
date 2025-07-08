@@ -129,8 +129,13 @@ std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& 
 						assert(volumeBitmapBlockNumber == 3);
 						fHandle->seekToPosition(bootBlockPosition + 0x200 * volumeBitmapBlockNumber);
 
-						// Seek to catalog
-						fHandle->skip(0xB800); // 0xA200
+						// Seek to extents
+						fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
+						// skip extends
+						assert(((extentsFileRecord0 >> 16) & 0xFFFF) == 0);
+						fHandle->skip(allocationBlockSize * (extentsFileRecord0 & 0xFFFF));
+						assert((extentsFileRecord1 & 0xFFFF) == 0);
+						assert((extentsFileRecord2 & 0xFFFF) == 0);
 
 						bTree catalogFile;
 						catalogFile.read(fHandle);
@@ -159,23 +164,27 @@ int main(int argc, char** argv)
 		printf("Need input file");
 		return -1;
 	}
-	const char* inputFile = argv[1];
+	const std::filesystem::path inputFile = argv[1];
 	tapeFile* fHandle = nullptr;
-	if (strstr(inputFile, ".cptp")) {
+	if (!_stricmp(inputFile.extension().string().c_str(), ".cptp")) {
 		fHandle = new tapeFile_cptp();
 	}
 	else {
 		fHandle = new tapeFile_raw();
 	}
-	if (!fHandle->open(inputFile)) {
+	if (!fHandle->open(inputFile.string().c_str())) {
 		printf("Can't open file %s", inputFile);
 		return -1;
 	}
 
 	std::string outputPath = "";
-	if (argc >= 2) {
+	if (argc > 2) {
 		outputPath = argv[2];
 	}
+	if (outputPath.length() == 0) {
+		outputPath = std::string("output\\") + inputFile.filename().string() + "\\";
+	}
+	std::filesystem::create_directories(outputPath);
 
 	uint16_t deskTapeMagic = fHandle->readU16_BE();
 	if (deskTapeMagic != 0x4454) {
