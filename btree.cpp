@@ -108,9 +108,10 @@ void readLeafNode(tapeFile* fHandle, sNode& newNode) {
 			leafRecord.m_FileRecord.m_reserved = fHandle->readU32_BE();
 			break;
 		case 3: // FolderThread
+		case 4: // FileThread
 			fHandle->skip(8); // unknown
-			leafRecord.m_FolderThread.m_parentCNID = fHandle->readU32_BE();
-			leafRecord.m_FolderThread.m_name = fHandle->readPascalString();
+			leafRecord.m_FolderOrFileThread.m_parentCNID = fHandle->readU32_BE();
+			leafRecord.m_FolderOrFileThread.m_name = fHandle->readPascalString();
 			break;
 		default:
 			assert(0);

@@ -42,10 +42,10 @@ struct sSession {
 
 std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
 	fHandle->seekToPosition(sessions[sessionIndex].m_sessionStartSector * 0x200);
-	uint32_t sessionStart = fHandle->tellPosition();
+	uint64_t sessionStart = fHandle->tellPosition();
 	if (fHandle->readU16_BE() == 0x524D) {
 		fHandle->seekToPosition(sessionStart + 0x400);
-		uint32_t partitionTableStart = fHandle->tellPosition() / 0x200;
+		uint64_t partitionTableStart = fHandle->tellPosition() / 0x200;
 
 		int partitionMapIndex = 0;
 		while (true)
@@ -60,31 +60,35 @@ std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& 
 			std::string pmPartType = fHandle->readString(32); // partition type
 
 			if (pmPartType == "Apple_HFS") {
-				uint32_t HFS_Start = (partitionTableStart - 1 + pmPyPartStart) * 0x200;
+				uint64_t HFS_Start = (partitionTableStart - 1 + pmPyPartStart) * 0x200;
 				fHandle->seekToPosition(HFS_Start);
 				// read HFS boot block
-				uint32_t bootBlockPosition = fHandle->tellPosition();
+				uint64_t bootBlockPosition = fHandle->tellPosition();
+				assert(HFS_Start == bootBlockPosition);
 				{
-					uint16_t bootBlockSignature = fHandle->readU16_BE(); assert(bootBlockSignature == 0x4C4B);
-					uint32_t bootCodeEntryPoint = fHandle->readU32_BE(); assert(bootCodeEntryPoint == 0x60000086);
-					uint16_t bootBlocksVersionNumber = fHandle->readU16_BE(); assert(bootBlocksVersionNumber == 0x4418);
-					uint16_t pageFlags = fHandle->readU16_BE();
-					std::string systemFilename = fHandle->readPascalFixedString(15);
-					std::string finderFilename = fHandle->readPascalFixedString(15);
-					std::string debugger1Filename = fHandle->readPascalFixedString(15);
-					std::string debugger2Filename = fHandle->readPascalFixedString(15);
-					std::string startupScreenFilename = fHandle->readPascalFixedString(15);
-					std::string startupProgramFilename = fHandle->readPascalFixedString(15);
-					std::string scrapFilename = fHandle->readPascalFixedString(15);
+					uint16_t bootBlockSignature = fHandle->readU16_BE();
+					if (bootBlockSignature == 0x4C4B)
+					{
+						uint32_t bootCodeEntryPoint = fHandle->readU32_BE(); assert(bootCodeEntryPoint == 0x60000086);
+						uint16_t bootBlocksVersionNumber = fHandle->readU16_BE(); assert(bootBlocksVersionNumber == 0x4418);
+						uint16_t pageFlags = fHandle->readU16_BE();
+						std::string systemFilename = fHandle->readPascalFixedString(15);
+						std::string finderFilename = fHandle->readPascalFixedString(15);
+						std::string debugger1Filename = fHandle->readPascalFixedString(15);
+						std::string debugger2Filename = fHandle->readPascalFixedString(15);
+						std::string startupScreenFilename = fHandle->readPascalFixedString(15);
+						std::string startupProgramFilename = fHandle->readPascalFixedString(15);
+						std::string scrapFilename = fHandle->readPascalFixedString(15);
 
-					uint16_t numAllocatedFileControlBlocks = fHandle->readU16_BE();
-					uint16_t numMaxEventQueueElements = fHandle->readU16_BE();
-					uint32_t systemHeap128K = fHandle->readU32_BE();
-					uint32_t systemHeap256K = fHandle->readU32_BE();
-					uint32_t systemHeapOther = fHandle->readU32_BE();
-					fHandle->readU16_BE();
-					uint32_t systemHeapSpace = fHandle->readU32_BE();
-					uint32_t fractionHeapFree = fHandle->readU32_BE();
+						uint16_t numAllocatedFileControlBlocks = fHandle->readU16_BE();
+						uint16_t numMaxEventQueueElements = fHandle->readU16_BE();
+						uint32_t systemHeap128K = fHandle->readU32_BE();
+						uint32_t systemHeap256K = fHandle->readU32_BE();
+						uint32_t systemHeapOther = fHandle->readU32_BE();
+						fHandle->readU16_BE();
+						uint32_t systemHeapSpace = fHandle->readU32_BE();
+						uint32_t fractionHeapFree = fHandle->readU32_BE();
+					}
 				}
 				// read the MDB (Master Directory Block)
 				fHandle->seekToPosition(bootBlockPosition + 0x400);
@@ -233,6 +237,8 @@ int main(int argc, char** argv)
 		newSession.m_sessionStartSector = currentSessionSector;
 
 		newSession.m_magic = fHandle->readU16_BE();
+		if (newSession.m_magic != 0x524D)
+			break;
 		newSession.m_sessionID = fHandle->readU16_BE();
 		newSession.m_sessionID2 = fHandle->readU16_BE();
 		newSession.m_unk6 = fHandle->readU16_BE();

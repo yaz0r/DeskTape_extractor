@@ -53,7 +53,7 @@ struct sLeafNode {
 	struct {
 		uint32_t m_parentCNID;
 		std::string m_name;
-	} m_FolderThread;
+	} m_FolderOrFileThread;
 };
 
 struct sIndexNode {

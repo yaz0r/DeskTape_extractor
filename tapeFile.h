@@ -90,12 +90,17 @@ public:
 	}
 	virtual uint64_t tellPosition() override {
 		int64_t absolutePosition = _ftelli64(m_file);
+		absolutePosition -= 0x10;
 		int64_t numSectors = absolutePosition / 0x211;
-		return absolutePosition - numSectors * 0x11;
+		return absolutePosition % 0x211 + numSectors * 0x200;
 	}
 	virtual void seekToPosition(uint64_t position) override {
 		int64_t sector = position / 0x200;
-		_fseeki64(m_file, (uint64_t)sector * 0x211 + 0x10 + position % 0x200, SEEK_SET);
+		int positionInSector = position % 0x200;
+		int64_t filePosition = 0x10;
+		filePosition += sector * 0x211;
+		filePosition += positionInSector;
+		_fseeki64(m_file, filePosition, SEEK_SET);
 	}
 	virtual void seekToSector(int sector) {
 		_fseeki64(m_file, (uint64_t)sector * 0x211 + 0x10, SEEK_SET);
