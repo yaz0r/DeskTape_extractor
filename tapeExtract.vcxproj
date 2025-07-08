@@ -132,10 +132,12 @@
     <ClCompile Include="btree.cpp" />
     <ClCompile Include="fileAccess.cpp" />
     <ClCompile Include="tapeExtract.cpp" />
+    <ClCompile Include="tapeFile.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="btree.h" />
     <ClInclude Include="fileAccess.h" />
+    <ClInclude Include="tapeFile.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -24,12 +24,18 @@
     <ClCompile Include="fileAccess.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="tapeFile.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="btree.h">
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="fileAccess.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="tapeFile.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

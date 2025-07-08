@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include "tapeFile.h"
 
 struct sLeafNode {
 	std::vector<uint8_t> m_key;
@@ -80,7 +81,7 @@ struct sHeaderNode {
 
 struct sNode {
 	uint32_t m_startPositionOnDisk;
-	void seekToRecord(FILE* fHandle, int recordIndex);
+	void seekToRecord(tapeFile* fHandle, int recordIndex);
 
 	// Node Descriptor
 	uint32_t m_next;
@@ -99,12 +100,11 @@ struct sNode {
 
 class bTree {
 public:
-	bool read(FILE* fHandle);
-	void dump(const std::string& outputPath);
+	bool read(tapeFile* fHandle);
+	void dump(tapeFile* fHandle, const std::string& outputPath);
 	void dumpLeafNodes(const std::string& outputFileName);
 
 	std::vector<sNode> m_nodes;
 
 	std::string getFolderPath(uint32_t CNID);
-	FILE* m_fHandle = nullptr;
 };
