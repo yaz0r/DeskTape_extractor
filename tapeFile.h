@@ -115,11 +115,11 @@ public:
 		return value;
 	}
 private:
-	int distanceToEndOfSector() {
-		int position = ftell(m_file);
-		int currentSector = position / 0x211;
-		int endOfSectorPosition = currentSector * 0x211 + 0x210;
-		int distance = endOfSectorPosition - position;
+	int64_t distanceToEndOfSector() {
+		int64_t position = _ftelli64(m_file);
+		int64_t currentSector = position / 0x211;
+		int64_t endOfSectorPosition = currentSector * 0x211 + 0x210;
+		int64_t distance = endOfSectorPosition - position;
 		assert(distance >= 0);
 		return distance;
 	}

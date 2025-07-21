@@ -67,6 +67,8 @@ std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& 
 				assert(HFS_Start == bootBlockPosition);
 				{
 					uint16_t bootBlockSignature = fHandle->readU16_BE();
+
+					// boot block can be null if disk is non-bootable (some tapes have been somehow set as bootable)
 					if (bootBlockSignature == 0x4C4B)
 					{
 						uint32_t bootCodeEntryPoint = fHandle->readU32_BE(); assert(bootCodeEntryPoint == 0x60000086);
@@ -130,21 +132,49 @@ std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& 
 						uint32_t catalogFileRecord2 = fHandle->readU32_BE();
 
 						// read the volume bitmap block
-						assert(volumeBitmapBlockNumber == 3);
-						fHandle->seekToPosition(bootBlockPosition + 0x200 * volumeBitmapBlockNumber);
+						{
+							assert(volumeBitmapBlockNumber == 3);
+							fHandle->seekToPosition(bootBlockPosition + 0x200 * volumeBitmapBlockNumber);
 
-						// Seek to extents
-						fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
-						// skip extends
-						assert(((extentsFileRecord0 >> 16) & 0xFFFF) == 0);
-						fHandle->skip(allocationBlockSize * (extentsFileRecord0 & 0xFFFF));
-						assert((extentsFileRecord1 & 0xFFFF) == 0);
-						assert((extentsFileRecord2 & 0xFFFF) == 0);
+							int numBytes = (numAllocationBlocks / 8);
+							if (numAllocationBlocks % 8) numBytes++;
 
-						bTree catalogFile;
-						catalogFile.read(fHandle);
-						return catalogFile;
-						//catalogFile.dump(outputPath);
+							std::vector<uint8_t> volumeBitmap;
+							volumeBitmap.resize(numBytes);
+
+							fHandle->readBuffer(volumeBitmap.data(), numBytes);
+
+							// For consistency
+							int numSectors = numBytes / 512;
+							if (numBytes % 512) numSectors++;
+							assert(volumeBitmapBlockNumber + numSectors == extentsStartBlockNumber);
+						}
+
+						// Read extents
+						{
+							fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
+							// skip extends
+							bTree extends;
+							extends.read(fHandle);
+							//extends.dump(outputPath);
+						}
+
+						// Read catalog
+						{
+							// Seek over extends and to catalog
+							fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
+							assert(((extentsFileRecord0 >> 16) & 0xFFFF) == 0);
+							fHandle->skip(allocationBlockSize * (extentsFileRecord0 & 0xFFFF));
+
+							// make sure there was no extra extents records
+							assert((extentsFileRecord1 & 0xFFFF) == 0);
+							assert((extentsFileRecord2 & 0xFFFF) == 0);
+
+							bTree catalogFile;
+							catalogFile.read(fHandle);
+							//catalogFile.dump(outputPath);
+							return catalogFile;
+						}
 					}
 
 				}
