@@ -40,7 +40,7 @@ struct sSession {
 
 };
 
-std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
+int64_t getHFSStartSector(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
 	fHandle->seekToPosition(sessions[sessionIndex].m_sessionStartSector * 0x200);
 	uint64_t sessionStart = fHandle->tellPosition();
 	if (fHandle->readU16_BE() == 0x524D) {
@@ -60,136 +60,140 @@ std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& 
 			std::string pmPartType = fHandle->readString(32); // partition type
 
 			if (pmPartType == "Apple_HFS") {
-				uint64_t HFS_Start = (partitionTableStart - 1 + pmPyPartStart) * 0x200;
-				fHandle->seekToPosition(HFS_Start);
-				// read HFS boot block
-				uint64_t bootBlockPosition = fHandle->tellPosition();
-				assert(HFS_Start == bootBlockPosition);
-				{
-					uint16_t bootBlockSignature = fHandle->readU16_BE();
-
-					// boot block can be null if disk is non-bootable (some tapes have been somehow set as bootable)
-					if (bootBlockSignature == 0x4C4B)
-					{
-						uint32_t bootCodeEntryPoint = fHandle->readU32_BE(); assert(bootCodeEntryPoint == 0x60000086);
-						uint16_t bootBlocksVersionNumber = fHandle->readU16_BE(); assert(bootBlocksVersionNumber == 0x4418);
-						uint16_t pageFlags = fHandle->readU16_BE();
-						std::string systemFilename = fHandle->readPascalFixedString(15);
-						std::string finderFilename = fHandle->readPascalFixedString(15);
-						std::string debugger1Filename = fHandle->readPascalFixedString(15);
-						std::string debugger2Filename = fHandle->readPascalFixedString(15);
-						std::string startupScreenFilename = fHandle->readPascalFixedString(15);
-						std::string startupProgramFilename = fHandle->readPascalFixedString(15);
-						std::string scrapFilename = fHandle->readPascalFixedString(15);
-
-						uint16_t numAllocatedFileControlBlocks = fHandle->readU16_BE();
-						uint16_t numMaxEventQueueElements = fHandle->readU16_BE();
-						uint32_t systemHeap128K = fHandle->readU32_BE();
-						uint32_t systemHeap256K = fHandle->readU32_BE();
-						uint32_t systemHeapOther = fHandle->readU32_BE();
-						fHandle->readU16_BE();
-						uint32_t systemHeapSpace = fHandle->readU32_BE();
-						uint32_t fractionHeapFree = fHandle->readU32_BE();
-					}
-				}
-				// read the MDB (Master Directory Block)
-				fHandle->seekToPosition(bootBlockPosition + 0x400);
-				{
-					uint16_t signature = fHandle->readU16_BE();
-					assert(signature == 0x4244);
-					{
-						uint32_t volumeCreationTime = fHandle->readU32_BE();
-						uint32_t volumeModificationTime = fHandle->readU32_BE();
-						uint16_t volumeAttributeFlags = fHandle->readU16_BE();
-						uint16_t numFilesInRoot = fHandle->readU16_BE();
-						uint16_t volumeBitmapBlockNumber = fHandle->readU16_BE();
-						uint16_t startOfNextAllocationSearch = fHandle->readU16_BE();
-						uint16_t numAllocationBlocks = fHandle->readU16_BE();
-						uint32_t allocationBlockSize = fHandle->readU32_BE();
-						uint32_t defaultClump = fHandle->readU32_BE();
-						uint16_t extentsStartBlockNumber = fHandle->readU16_BE();
-						uint32_t nextAvailableCatalogNodeIdentifier = fHandle->readU32_BE();
-						uint16_t numUnusedAllocationBlocks = fHandle->readU16_BE();
-						std::string volumeName = fHandle->readPascalFixedString(27);
-						uint32_t lastBackupTime = fHandle->readU32_BE();
-						uint16_t backupSequenceNumber = fHandle->readU16_BE();
-						uint32_t volumeWriteCount = fHandle->readU32_BE();
-						uint32_t clumpSizeForExtentsFile = fHandle->readU32_BE();
-						uint32_t clumpSizeForCatalogFile = fHandle->readU32_BE();
-						uint16_t numSubDirInRoot = fHandle->readU16_BE();
-						uint32_t totalNumberOfFiles = fHandle->readU32_BE();
-						uint32_t totalNumberOfFolders = fHandle->readU32_BE();
-						fHandle->skip(32); // skip the finder information
-						uint16_t embeddedVolumeSignature = fHandle->readU16_BE();
-						uint32_t embeddedVolumeDescriptor = fHandle->readU32_BE();
-						uint32_t extentsFileSize = fHandle->readU32_BE();
-						uint32_t extentsFileRecord0 = fHandle->readU32_BE();
-						uint32_t extentsFileRecord1 = fHandle->readU32_BE();
-						uint32_t extentsFileRecord2 = fHandle->readU32_BE();
-						uint32_t catalogFileSize = fHandle->readU32_BE();
-						uint32_t catalogFileRecord0 = fHandle->readU32_BE();
-						uint32_t catalogFileRecord1 = fHandle->readU32_BE();
-						uint32_t catalogFileRecord2 = fHandle->readU32_BE();
-
-						// read the volume bitmap block
-						{
-							assert(volumeBitmapBlockNumber == 3);
-							fHandle->seekToPosition(bootBlockPosition + 0x200 * volumeBitmapBlockNumber);
-
-							int numBytes = (numAllocationBlocks / 8);
-							if (numAllocationBlocks % 8) numBytes++;
-
-							std::vector<uint8_t> volumeBitmap;
-							volumeBitmap.resize(numBytes);
-
-							fHandle->readBuffer(volumeBitmap.data(), numBytes);
-
-							// For consistency
-							int numSectors = numBytes / 512;
-							if (numBytes % 512) numSectors++;
-							assert(volumeBitmapBlockNumber + numSectors == extentsStartBlockNumber);
-						}
-
-						// Read extents
-						{
-							fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
-							// skip extends
-							bTree extends;
-							extends.read(fHandle);
-							//extends.dump(outputPath);
-						}
-
-						// Read catalog
-						{
-							// Seek over extends and to catalog
-							fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
-							assert(((extentsFileRecord0 >> 16) & 0xFFFF) == 0);
-							fHandle->skip(allocationBlockSize * (extentsFileRecord0 & 0xFFFF));
-
-							// make sure there was no extra extents records
-							assert((extentsFileRecord1 & 0xFFFF) == 0);
-							assert((extentsFileRecord2 & 0xFFFF) == 0);
-
-							bTree catalogFile;
-							catalogFile.read(fHandle);
-							//catalogFile.dump(outputPath);
-							return catalogFile;
-						}
-					}
-
-				}
+				return (partitionTableStart - 1 + pmPyPartStart);
 			}
-
 			partitionMapIndex++;
 			if (partitionMapIndex >= pmMapBlkCnt) {
-				return std::optional<bTree>();
+				return -1;
+			}
+		}
+	}
+
+	return -1;
+}
+
+std::optional<bTree> getCatalogSession(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
+	int64_t HFS_Start = getHFSStartSector(sessionIndex, sessions, fHandle);
+	if(HFS_Start == -1)
+		return std::optional<bTree>();
+
+	fHandle->seekToSector(HFS_Start);
+
+	// read HFS boot block
+	uint64_t bootBlockPosition = fHandle->tellPosition();
+	{
+		uint16_t bootBlockSignature = fHandle->readU16_BE();
+
+		// boot block can be null if disk is non-bootable (some tapes have been somehow set as bootable)
+		if (bootBlockSignature == 0x4C4B)
+		{
+			uint32_t bootCodeEntryPoint = fHandle->readU32_BE(); assert(bootCodeEntryPoint == 0x60000086);
+			uint16_t bootBlocksVersionNumber = fHandle->readU16_BE(); assert(bootBlocksVersionNumber == 0x4418);
+			uint16_t pageFlags = fHandle->readU16_BE();
+			std::string systemFilename = fHandle->readPascalFixedString(15);
+			std::string finderFilename = fHandle->readPascalFixedString(15);
+			std::string debugger1Filename = fHandle->readPascalFixedString(15);
+			std::string debugger2Filename = fHandle->readPascalFixedString(15);
+			std::string startupScreenFilename = fHandle->readPascalFixedString(15);
+			std::string startupProgramFilename = fHandle->readPascalFixedString(15);
+			std::string scrapFilename = fHandle->readPascalFixedString(15);
+
+			uint16_t numAllocatedFileControlBlocks = fHandle->readU16_BE();
+			uint16_t numMaxEventQueueElements = fHandle->readU16_BE();
+			uint32_t systemHeap128K = fHandle->readU32_BE();
+			uint32_t systemHeap256K = fHandle->readU32_BE();
+			uint32_t systemHeapOther = fHandle->readU32_BE();
+			fHandle->readU16_BE();
+			uint32_t systemHeapSpace = fHandle->readU32_BE();
+			uint32_t fractionHeapFree = fHandle->readU32_BE();
+		}
+	}
+	// read the MDB (Master Directory Block)
+	fHandle->seekToPosition(bootBlockPosition + 0x400);
+	{
+		uint16_t signature = fHandle->readU16_BE();
+		assert(signature == 0x4244);
+		{
+			uint32_t volumeCreationTime = fHandle->readU32_BE();
+			uint32_t volumeModificationTime = fHandle->readU32_BE();
+			uint16_t volumeAttributeFlags = fHandle->readU16_BE();
+			uint16_t numFilesInRoot = fHandle->readU16_BE();
+			uint16_t volumeBitmapBlockNumber = fHandle->readU16_BE();
+			uint16_t startOfNextAllocationSearch = fHandle->readU16_BE();
+			uint16_t numAllocationBlocks = fHandle->readU16_BE();
+			uint32_t allocationBlockSize = fHandle->readU32_BE();
+			uint32_t defaultClump = fHandle->readU32_BE();
+			uint16_t extentsStartBlockNumber = fHandle->readU16_BE();
+			uint32_t nextAvailableCatalogNodeIdentifier = fHandle->readU32_BE();
+			uint16_t numUnusedAllocationBlocks = fHandle->readU16_BE();
+			std::string volumeName = fHandle->readPascalFixedString(27);
+			uint32_t lastBackupTime = fHandle->readU32_BE();
+			uint16_t backupSequenceNumber = fHandle->readU16_BE();
+			uint32_t volumeWriteCount = fHandle->readU32_BE();
+			uint32_t clumpSizeForExtentsFile = fHandle->readU32_BE();
+			uint32_t clumpSizeForCatalogFile = fHandle->readU32_BE();
+			uint16_t numSubDirInRoot = fHandle->readU16_BE();
+			uint32_t totalNumberOfFiles = fHandle->readU32_BE();
+			uint32_t totalNumberOfFolders = fHandle->readU32_BE();
+			fHandle->skip(32); // skip the finder information
+			uint16_t embeddedVolumeSignature = fHandle->readU16_BE();
+			uint32_t embeddedVolumeDescriptor = fHandle->readU32_BE();
+			uint32_t extentsFileSize = fHandle->readU32_BE();
+			uint32_t extentsFileRecord0 = fHandle->readU32_BE();
+			uint32_t extentsFileRecord1 = fHandle->readU32_BE();
+			uint32_t extentsFileRecord2 = fHandle->readU32_BE();
+			uint32_t catalogFileSize = fHandle->readU32_BE();
+			uint32_t catalogFileRecord0 = fHandle->readU32_BE();
+			uint32_t catalogFileRecord1 = fHandle->readU32_BE();
+			uint32_t catalogFileRecord2 = fHandle->readU32_BE();
+
+			// read the volume bitmap block
+			{
+				assert(volumeBitmapBlockNumber == 3);
+				fHandle->seekToPosition(bootBlockPosition + 0x200 * volumeBitmapBlockNumber);
+
+				int numBytes = (numAllocationBlocks / 8);
+				if (numAllocationBlocks % 8) numBytes++;
+
+				std::vector<uint8_t> volumeBitmap;
+				volumeBitmap.resize(numBytes);
+
+				fHandle->readBuffer(volumeBitmap.data(), numBytes);
+
+				// For consistency
+				int numSectors = numBytes / 512;
+				if (numBytes % 512) numSectors++;
+				assert(volumeBitmapBlockNumber + numSectors == extentsStartBlockNumber);
+			}
+
+			// Read extents
+			{
+				fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
+				// skip extends
+				bTree extends;
+				//extends.read(fHandle);
+				//extends.dump(outputPath);
+			}
+
+			// Read catalog
+			{
+				// Seek over extends and to catalog
+				fHandle->seekToPosition(bootBlockPosition + 0x200 * extentsStartBlockNumber);
+				assert(((extentsFileRecord0 >> 16) & 0xFFFF) == 0);
+				fHandle->skip(allocationBlockSize * (extentsFileRecord0 & 0xFFFF));
+
+				// make sure there was no extra extents records
+				assert((extentsFileRecord1 & 0xFFFF) == 0);
+				assert((extentsFileRecord2 & 0xFFFF) == 0);
+
+				bTree catalogFile;
+				catalogFile.read(fHandle);
+				//catalogFile.dump(outputPath);
+				return catalogFile;
 			}
 		}
 
-		return std::optional<bTree>();
 	}
-	fHandle->seekToPosition(sessionStart + 0x200);
-	return std::optional<bTree>();
 }
 
 int main(int argc, char** argv)
@@ -331,47 +335,133 @@ int main(int argc, char** argv)
 		fclose(fOutput);
 	}
 
-	// Rewrite session
-	if (false) {
-		for (int i = 0; i < sessions.size(); i++)
-		{
-			auto& session = sessions[i];
-			fHandle->seekToPosition(session.m_sessionStartSector * 0x200 + 0x400);
-			std::filesystem::create_directories(outputPath);
-			std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".bin";
-			if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+	// Dump sessions
+	for (int i = 0; i < sessions.size(); i++)
+	{
+		sSession& session = sessions[i];
 
-				// Go to beginning of data
+		std::optional<bTree> catalogFileSession = getCatalogSession(i, sessions, fHandle);
+		if (catalogFileSession.has_value()) {
+			catalogFileSession->dumpLeafNodes(std::format("{}/session_{}_nodes.txt", outputPath.c_str(), i));
+			//std::optional<bTree> catalogFileSessionNext = getCatalogSession(i+1, sessions, fHandle);
+		}
+
+		std::vector<uint8_t> systemSectors;
+		systemSectors.resize(session.m_numSystemSectors * 0x200);
+
+		fHandle->seekToSector(session.m_sessionStartSector + 2);
+		std::vector<uint8_t>::iterator systemSectorDestination = systemSectors.begin();
+		for (int k = 0; k < session.m_numSystemSectors; k++) {
+			std::array<uint8_t, 0x200> buffer;
+			fHandle->readBuffer(&systemSectorDestination[0], 0x200);
+			systemSectorDestination += 0x200;
+		}
+		/*
+		for (int j = 0; j < session.m_spans.size(); j++) {
+			std::vector<uint8_t>::iterator systemSectorDestination = systemSectors.begin() + session.m_spans[j].m0 * 0x200;
+			for (int k = 0; k < session.m_spans[j].m4; k++) {
+				std::array<uint8_t, 0x200> buffer;
+				fHandle->readBuffer(&systemSectorDestination[0], 0x200);
+				systemSectorDestination += 0x200;
+			}
+		}
+		*/
+
+		// Dump system sectors
+		if (true) {
+			std::string outputSessionSystemSectorsFileName = outputPath + "/" + "session_" + std::to_string(i) + "_system_sectors.bin";
+			if (FILE* fOutputSessionSystemSectors = fopen(outputSessionSystemSectorsFileName.c_str(), "wb+")) {
+				fwrite(systemSectors.data(), 1, systemSectors.size(), fOutputSessionSystemSectors);
+				fclose(fOutputSessionSystemSectors);
+			}
+		}
+
+		// Dump the session as a .DSK
+		int64_t HFSStartSector = getHFSStartSector(i, sessions, fHandle);
+		if (HFSStartSector != -1) {
+			HFSStartSector -= session.m_sessionStartSector + 2;
+			std::string outputSessionFileName = outputPath + "/" + "session_" + std::to_string(i) + ".dsk";
+			if (FILE* fOutputSession = fopen(outputSessionFileName.c_str(), "wb+")) {
+				fwrite(systemSectors.data() + HFSStartSector * 0x200, 1, 0x100800, fOutputSession);
+
+				for (int i = 0; i < 0x357; i++) {
+					std::array<uint8_t, 0x200> buffer;
+					buffer.fill(0);
+					fwrite(buffer.data(), 1, 0x200, fOutputSession);
+				}
+
 				fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
-				fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+				//fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
 				for (int k = 0; k < session.m_currentSession; k++) {
 					std::array<uint8_t, 0x200> buffer;
 					fHandle->readBuffer(buffer.data(), 0x200);
 					fwrite(buffer.data(), 1, 0x200, fOutputSession);
 				}
 
-				for (int j = 0; j < session.m_spans.size(); j++) {
-					fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
-					for (int k = 0; k < session.m_spans[j].m4; k++) {
-						std::array<uint8_t, 0x200> buffer;
-						fHandle->readBuffer(buffer.data(), 0x200);
-						fwrite(buffer.data(), 1, 0x200, fOutputSession);
-					}
-				}
-
 				fclose(fOutputSession);
 			}
 		}
-	}
 
-	for (int i = 0; i < sessions.size(); i++) {
-		std::optional<bTree> catalogFileSession = getCatalogSession(i, sessions, fHandle);
-		if (catalogFileSession.has_value()) {
-			catalogFileSession->dumpLeafNodes(std::format("{}/nodes_{}.txt", outputPath.c_str(), i));
+		break;
+
+		/*
+
+		fHandle->seekToPosition(session.m_sessionStartSector * 0x200 + 0x400);
+		std::filesystem::create_directories(outputPath);
+		std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + "_system_sectors.bin";
+		if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+			// write the system sectors
+			fHandle->seekToSector(session.m_sessionStartSector + 2);
+			for (int j = 0; j < session.m_spans.size(); j++) {
+				fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
+				for (int k = 0; k < session.m_spans[j].m4; k++) {
+					std::array<uint8_t, 0x200> buffer;
+					fHandle->readBuffer(buffer.data(), 0x200);
+					fwrite(buffer.data(), 1, 0x200, fOutputSession);
+				}
+			}
+			fclose(fOutputSession);
 		}
-
-		//std::optional<bTree> catalogFileSessionNext = getCatalogSession(i+1, sessions, fHandle);
+		*/
 	}
+
+
+#if 0
+	// Dump session as a HFS file
+	for (int i = 0; i < 1; i++)
+	{
+		sSession& session = sessions[i];
+		fHandle->seekToPosition(session.m_sessionStartSector * 0x200 + 0x400);
+		std::filesystem::create_directories(outputPath);
+		std::string outputSession = outputPath + "/" + "session_" + std::to_string(i) + ".HFS";
+		if (FILE* fOutputSession = fopen(outputSession.c_str(), "wb+")) {
+			// write the system sectors
+			fHandle->seekToSector(session.m_sessionStartSector + 2);
+			for (int j = 0; j < session.m_spans.size(); j++) {
+				fseek(fOutputSession, session.m_spans[j].m0 * 0x200, SEEK_SET);
+				for (int k = 0; k < session.m_spans[j].m4; k++) {
+					std::array<uint8_t, 0x200> buffer;
+					fHandle->readBuffer(buffer.data(), 0x200);
+					fwrite(buffer.data(), 1, 0x200, fOutputSession);
+				}
+			}
+
+			/*
+			// Go to beginning of data
+			fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
+			fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+			for (int k = 0; k < session.m_currentSession; k++) {
+				std::array<uint8_t, 0x200> buffer;
+				fHandle->readBuffer(buffer.data(), 0x200);
+				fwrite(buffer.data(), 1, 0x200, fOutputSession);
+			}
+			*/
+
+
+			fclose(fOutputSession);
+		}
+	}
+#endif
 
 	return 0;
 }
