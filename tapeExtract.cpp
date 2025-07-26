@@ -40,6 +40,42 @@ struct sSession {
 
 };
 
+std::vector<uint8_t> getDTDiskInfo(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
+	fHandle->seekToPosition(sessions[sessionIndex].m_sessionStartSector * 0x200);
+	uint64_t sessionStart = fHandle->tellPosition();
+	if (fHandle->readU16_BE() == 0x524D) {
+		fHandle->seekToPosition(sessionStart + 0x400);
+		uint64_t partitionTableStart = fHandle->tellPosition() / 0x200;
+
+		int partitionMapIndex = 0;
+		while (true)
+		{
+			fHandle->seekToPosition((partitionTableStart + partitionMapIndex) * 0x200);
+			uint16_t pmSig = fHandle->readU16_BE(); assert(pmSig == 0x504D); // signature 
+			fHandle->readU16_BE(); // padding
+			uint32_t pmMapBlkCnt = fHandle->readU32_BE(); /* partition blocks count */
+			uint32_t pmPyPartStart = fHandle->readU32_BE(); /* physical block start of partition */
+			uint32_t pmPartBlkCnt = fHandle->readU32_BE(); /* physical block count of partition */
+			std::string pmPartName = fHandle->readString(32); // partition name
+			std::string pmPartType = fHandle->readString(32); // partition type
+
+			if (pmPartType == "Apple_Data") {
+				std::vector<uint8_t> data;
+				data.resize(pmPartBlkCnt * 0x200);
+				fHandle->seekToSector(partitionTableStart - 1 + pmPyPartStart);
+				fHandle->readBuffer(data.data(), data.size());
+				return data;
+			}
+			partitionMapIndex++;
+			if (partitionMapIndex >= pmMapBlkCnt) {
+				return std::vector<uint8_t>();
+			}
+		}
+	}
+
+	return std::vector<uint8_t>();
+}
+
 int64_t getHFSStartSector(int sessionIndex, std::vector<sSession>& sessions, tapeFile* fHandle) {
 	fHandle->seekToPosition(sessions[sessionIndex].m_sessionStartSector * 0x200);
 	uint64_t sessionStart = fHandle->tellPosition();
@@ -304,12 +340,12 @@ int main(int argc, char** argv)
 		currentSessionSector = newSession.m_previousSession - (newSession.m_currentSession - newSession.m_sessionStartSector);
 	}
 
-	// Dump session data
-	if (FILE* fOutput = fopen(std::format("{}/sessions.txt", outputPath.c_str()).c_str(), "w+")) {
-		for (int i = 0; i < sessions.size(); i++) {
-			auto& session = sessions[i];
-
-			fprintf(fOutput, "=============================================\n");
+	// Dump sessions
+	for (int i = 0; i < sessions.size(); i++)
+	{
+		sSession& session = sessions[i];
+		// Dump session data
+		if (FILE* fOutput = fopen(std::format("{}/session_{}_info.txt", outputPath.c_str(), i).c_str(), "w+")) {
 			fprintf(fOutput, "Session %d\n", i);
 			fprintf(fOutput, "m_sessionID 0x%04X\n", session.m_sessionID);
 			fprintf(fOutput, "m_sessionID2 0x%04X\n", session.m_sessionID2);
@@ -331,14 +367,8 @@ int main(int argc, char** argv)
 			for (int j = 0; j < session.m_numSpans; j++) {
 				fprintf(fOutput, "Span %d 0x%08X 0x%08X\n", j, session.m_spans[j].m0, session.m_spans[j].m4);
 			}
+			fclose(fOutput);
 		}
-		fclose(fOutput);
-	}
-
-	// Dump sessions
-	for (int i = 0; i < sessions.size(); i++)
-	{
-		sSession& session = sessions[i];
 
 		std::optional<bTree> catalogFileSession = getCatalogSession(i, sessions, fHandle);
 		if (catalogFileSession.has_value()) {
@@ -351,12 +381,13 @@ int main(int argc, char** argv)
 
 		fHandle->seekToSector(session.m_sessionStartSector + 2);
 		std::vector<uint8_t>::iterator systemSectorDestination = systemSectors.begin();
+		/*
 		for (int k = 0; k < session.m_numSystemSectors; k++) {
 			std::array<uint8_t, 0x200> buffer;
 			fHandle->readBuffer(&systemSectorDestination[0], 0x200);
 			systemSectorDestination += 0x200;
 		}
-		/*
+		*/
 		for (int j = 0; j < session.m_spans.size(); j++) {
 			std::vector<uint8_t>::iterator systemSectorDestination = systemSectors.begin() + session.m_spans[j].m0 * 0x200;
 			for (int k = 0; k < session.m_spans[j].m4; k++) {
@@ -365,7 +396,6 @@ int main(int argc, char** argv)
 				systemSectorDestination += 0x200;
 			}
 		}
-		*/
 
 		// Dump system sectors
 		if (true) {
@@ -376,33 +406,50 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Dump the session as a .DSK
-		int64_t HFSStartSector = getHFSStartSector(i, sessions, fHandle);
-		if (HFSStartSector != -1) {
-			HFSStartSector -= session.m_sessionStartSector + 2;
-			std::string outputSessionFileName = outputPath + "/" + "session_" + std::to_string(i) + ".dsk";
-			if (FILE* fOutputSession = fopen(outputSessionFileName.c_str(), "wb+")) {
-				fwrite(systemSectors.data() + HFSStartSector * 0x200, 1, 0x100800, fOutputSession);
+		// Dump the DT disk info partition
+		if (FILE* fOutput = fopen(std::format("{}/session_{}_DT_diskInfo.bin", outputPath.c_str(), i).c_str(), "wb+")) {
+			std::vector<uint8_t> DTDiskInfo = getDTDiskInfo(i, sessions, fHandle);
 
-				for (int i = 0; i < 0x357; i++) {
-					std::array<uint8_t, 0x200> buffer;
-					buffer.fill(0);
-					fwrite(buffer.data(), 1, 0x200, fOutputSession);
-				}
+			/*
+			Format:
+			u32 0x00000F72
+			u16 sessionID
+			u16 sessionID (same as previous)
+			u32 0
+			*/
 
-				fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
-				//fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
-				for (int k = 0; k < session.m_currentSession; k++) {
-					std::array<uint8_t, 0x200> buffer;
-					fHandle->readBuffer(buffer.data(), 0x200);
-					fwrite(buffer.data(), 1, 0x200, fOutputSession);
-				}
-
-				fclose(fOutputSession);
-			}
+			fwrite(DTDiskInfo.data(), 1, DTDiskInfo.size(), fOutput);
+			fclose(fOutput);
 		}
 
-		break;
+		// Dump the session as a .DSK
+		if(i==0)
+		{
+			int64_t HFSStartSector = getHFSStartSector(i, sessions, fHandle);
+			if (HFSStartSector != -1) {
+				HFSStartSector -= session.m_sessionStartSector + 2;
+				std::string outputSessionFileName = outputPath + "/" + "session_" + std::to_string(i) + ".dsk";
+				if (FILE* fOutputSession = fopen(outputSessionFileName.c_str(), "wb+")) {
+					fwrite(systemSectors.data() + HFSStartSector * 0x200, 1, 0x100800, fOutputSession);
+
+					for (int i = 0; i < 0x357; i++) {
+						std::array<uint8_t, 0x200> buffer;
+						buffer.fill(0);
+						fwrite(buffer.data(), 1, 0x200, fOutputSession);
+					}
+
+					fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
+					//fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+					for (int k = 0; k < session.m_currentSession; k++) {
+						std::array<uint8_t, 0x200> buffer;
+						fHandle->readBuffer(buffer.data(), 0x200);
+						fwrite(buffer.data(), 1, 0x200, fOutputSession);
+					}
+
+					fclose(fOutputSession);
+				}
+			}
+		}
 
 		/*
 
