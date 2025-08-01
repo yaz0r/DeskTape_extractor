@@ -406,18 +406,11 @@ int main(int argc, char** argv)
 			}
 		}
 
+		std::vector<uint8_t> DTDiskInfo = getDTDiskInfo(i, sessions, fHandle);
+		uint32_t startOfData = _byteswap_ulong(*(uint32_t*)(DTDiskInfo.data() + 0x36)) + 0xA;
+
 		// Dump the DT disk info partition
 		if (FILE* fOutput = fopen(std::format("{}/session_{}_DT_diskInfo.bin", outputPath.c_str(), i).c_str(), "wb+")) {
-			std::vector<uint8_t> DTDiskInfo = getDTDiskInfo(i, sessions, fHandle);
-
-			/*
-			Format:
-			u32 0x00000F72
-			u16 sessionID
-			u16 sessionID (same as previous)
-			u32 0
-			*/
-
 			fwrite(DTDiskInfo.data(), 1, DTDiskInfo.size(), fOutput);
 			fclose(fOutput);
 		}
@@ -432,12 +425,14 @@ int main(int argc, char** argv)
 				if (FILE* fOutputSession = fopen(outputSessionFileName.c_str(), "wb+")) {
 					fwrite(systemSectors.data() + HFSStartSector * 0x200, 1, 0x100800, fOutputSession);
 
-					int startOfDataSectors = 0x357 + ftell(fOutputSession) / 0x200;
+					int startOfDataSectors = startOfData;
+					/*
 					if (catalogFileSession.has_value()) {
 						std::vector<bTree::sSortedEntry> sortedNodes = catalogFileSession->getSortedNodes();
-						int firstFileSector = sortedNodes[0].m_startSector * (0x9800 / 0x200);
-						//startOfDataSectors = firstFileSector;
+						int firstFileSector = ((sortedNodes[0].m_startSector * 0x9800) + (1*0x9800)) / 0x200;
+						startOfDataSectors = firstFileSector;
 					}
+					*/
 
 					if (ftell(fOutputSession) / 0x200 <= startOfDataSectors) {
 						while (ftell(fOutputSession) / 0x200 != startOfDataSectors) {
