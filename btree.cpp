@@ -302,3 +302,39 @@ void bTree::dumpLeafNodes(const std::string& outputFileName) {
 		}
 	}
 }
+
+std::vector<bTree::sSortedEntry> bTree::getSortedNodes() {
+	std::vector<sSortedEntry>sortedEntries;
+
+	{
+		sNode& rootNode = m_nodes[m_nodes[0].m_headerNode.rootNode];
+
+		for (int i = 1; i < m_nodes[0].m_headerNode.totalNodes; i++) {
+			sNode& currentNode = m_nodes[i];
+			if (currentNode.m_type == 0xFF) {
+				// leaf node
+				for (int j = 0; j < currentNode.m_leafNode.size(); j++) {
+					auto& leafNodeRecord = currentNode.m_leafNode[j];
+					if (leafNodeRecord.m_type == 2) {
+						// File
+						uint32_t parentCNID = leafNodeRecord.getParentCNID();
+						std::string name = leafNodeRecord.getName();
+
+						if (leafNodeRecord.m_FileRecord.m_firstDataForkExtents[0]) {
+							sSortedEntry& newEntry = sortedEntries.emplace_back();
+							newEntry.m_startSector = leafNodeRecord.m_FileRecord.m_firstDataForkExtents[0] >> 16;
+						}
+						if (leafNodeRecord.m_FileRecord.m_firstResourceForkExtents[0]) {
+							sSortedEntry& newEntry = sortedEntries.emplace_back();
+							newEntry.m_startSector = leafNodeRecord.m_FileRecord.m_firstResourceForkExtents[0] >> 16;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	std::sort(sortedEntries.begin(), sortedEntries.end(), [](const sSortedEntry& a, const sSortedEntry& b) { return a.m_startSector < b.m_startSector; });
+
+	return sortedEntries;
+}

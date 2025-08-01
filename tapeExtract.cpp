@@ -432,18 +432,27 @@ int main(int argc, char** argv)
 				if (FILE* fOutputSession = fopen(outputSessionFileName.c_str(), "wb+")) {
 					fwrite(systemSectors.data() + HFSStartSector * 0x200, 1, 0x100800, fOutputSession);
 
-					for (int i = 0; i < 0x357; i++) {
-						std::array<uint8_t, 0x200> buffer;
-						buffer.fill(0);
-						fwrite(buffer.data(), 1, 0x200, fOutputSession);
+					int startOfDataSectors = 0x357 + ftell(fOutputSession) / 0x200;
+					if (catalogFileSession.has_value()) {
+						std::vector<bTree::sSortedEntry> sortedNodes = catalogFileSession->getSortedNodes();
+						int firstFileSector = sortedNodes[0].m_startSector * (0x9800 / 0x200);
+						//startOfDataSectors = firstFileSector;
 					}
 
-					fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
-					//fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
-					for (int k = 0; k < session.m_currentSession; k++) {
-						std::array<uint8_t, 0x200> buffer;
-						fHandle->readBuffer(buffer.data(), 0x200);
-						fwrite(buffer.data(), 1, 0x200, fOutputSession);
+					if (ftell(fOutputSession) / 0x200 <= startOfDataSectors) {
+						while (ftell(fOutputSession) / 0x200 != startOfDataSectors) {
+							std::array<uint8_t, 0x200> buffer;
+							buffer.fill(0);
+							fwrite(buffer.data(), 1, 0x200, fOutputSession);
+						}
+
+						fHandle->seekToPosition((0xA - (session.m_currentSession - session.m_sessionStartSector)) * 0x200);
+						//fseek(fOutputSession, 0xBB2 * 0x200, SEEK_SET);
+						for (int k = 0; k < session.m_currentSession; k++) {
+							std::array<uint8_t, 0x200> buffer;
+							fHandle->readBuffer(buffer.data(), 0x200);
+							fwrite(buffer.data(), 1, 0x200, fOutputSession);
+						}
 					}
 
 					fclose(fOutputSession);

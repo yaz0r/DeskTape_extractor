@@ -107,4 +107,9 @@ public:
 	std::vector<sNode> m_nodes;
 
 	std::string getFolderPath(uint32_t CNID);
+
+	struct sSortedEntry {
+		uint32_t m_startSector;
+	};
+	std::vector<sSortedEntry> getSortedNodes();
 };
