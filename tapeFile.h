@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string>
 #include <assert.h>
+#include <array>
 
 class tapeFile {
 public:
@@ -29,6 +30,8 @@ public:
 	virtual std::string readPascalFixedString(int size);
 	virtual std::string readPascalString();
 	virtual std::string readString(int size);
+
+	virtual void readSector(int sectorIndex, std::array<uint8_t, 0x200>& output) = 0;
 
 protected:
 	uint32_t m_numSectors = 0;
@@ -66,6 +69,10 @@ public:
 		assert(numByteRead == 1);
 		return value;
 	}
+	virtual void readSector(int sectorIndex, std::array<uint8_t, 0x200>& output) override {
+		seekToSector(sectorIndex);
+		fread(output.data(), 1, 0x200, m_file);
+	}
 private:
 	FILE* m_file = nullptr;
 };
@@ -85,38 +92,56 @@ public:
 		fseek(m_file, 0, SEEK_SET);
 		m_numSectors = size / 0x211;
 		assert(m_numSectors * 0x211 + 0x12 == size);
+		m_currentPosition = 0;
 		seekToSector(0);
 		return true;
 	}
 	virtual uint64_t tellPosition() override {
-		int64_t absolutePosition = _ftelli64(m_file);
+		assert(_ftelli64(m_file) == m_currentPosition);
+		int64_t absolutePosition = m_currentPosition;
 		absolutePosition -= 0x10;
 		int64_t numSectors = absolutePosition / 0x211;
 		return absolutePosition % 0x211 + numSectors * 0x200;
 	}
 	virtual void seekToPosition(uint64_t position) override {
+		assert(_ftelli64(m_file) == m_currentPosition);
 		int64_t sector = position / 0x200;
 		int positionInSector = position % 0x200;
 		int64_t filePosition = 0x10;
 		filePosition += sector * 0x211;
 		filePosition += positionInSector;
 		_fseeki64(m_file, filePosition, SEEK_SET);
+		m_currentPosition = filePosition;
 	}
 	virtual void seekToSector(int sector) {
+		assert(_ftelli64(m_file) == m_currentPosition);
 		_fseeki64(m_file, (uint64_t)sector * 0x211 + 0x10, SEEK_SET);
+		m_currentPosition = (uint64_t)sector * 0x211 + 0x10;
 	}
 	virtual uint8_t readU8() {
 		if (distanceToEndOfSector() == 0) {
+			assert(_ftelli64(m_file) == m_currentPosition);
 			fseek(m_file, 0x11, SEEK_CUR); // skip over inter-sector data
+			m_currentPosition += 0x11;
 		}
 		uint8_t value;
 		size_t numByteRead = fread(&value, 1, 1, m_file);
+		m_currentPosition++;
 		assert(numByteRead == 1);
 		return value;
 	}
+
+	virtual void readSector(int sectorIndex, std::array<uint8_t, 0x200>& output) override {
+		assert(_ftelli64(m_file) == m_currentPosition);
+		seekToSector(sectorIndex);
+		assert(_ftelli64(m_file) == m_currentPosition);
+		fread(output.data(), 1, 0x200, m_file);
+		m_currentPosition += 0x200;
+	}
 private:
 	int64_t distanceToEndOfSector() {
-		int64_t position = _ftelli64(m_file);
+		assert(_ftelli64(m_file) == m_currentPosition);
+		int64_t position = m_currentPosition;
 		int64_t currentSector = position / 0x211;
 		int64_t endOfSectorPosition = currentSector * 0x211 + 0x210;
 		int64_t distance = endOfSectorPosition - position;
@@ -124,4 +149,5 @@ private:
 		return distance;
 	}
 	FILE* m_file = nullptr;
+	int64_t m_currentPosition = 0;
 };
