@@ -18,3 +18,4 @@ An output folder will be created with a subfolder for each tape image. This is w
 ## Limitations
 Currently only support raw files or .cptp files generated from DiscImageChef.  
 Also **only the first session** of the tape will be extract at the current time. Additional session support is being worked on.
+Only tapes created by DeskTape 1.5 and 2.0 have been tested so far. If you have backups from other versions, feel free to open an issue.
